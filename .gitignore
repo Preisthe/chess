@@ -1,0 +1,7 @@
+data
+model
+__pycache__
+test
+train
+*.jpg
+.DS_Store
