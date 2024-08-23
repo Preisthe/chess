@@ -2,37 +2,105 @@ import torch.nn as nn
 import torch
 from torch.utils import data
 from PIL import Image
+import cv2
+import argparse
+import itertools
+import matplotlib.pyplot as plt
 import numpy as np
 from torchvision import transforms
 import os
 import params
 import CnnModel
 
+# 解析命令行参数
+# parser = argparse.ArgumentParser()
+# parser.add_argument('--convstd', type=float, default=0.5)
+# parser.add_argument('--linstd', type=float, default=0.05)
+# parser.add_argument('--lr', type=float, default=0.001)
+# parser.add_argument('--batchsize', type=int, default=32)
+# parser.add_argument('--epochs', type=int, default=8)
+# args = parser.parse_args()
+
+def enhance_color(roi, thresh=0.1):
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    enhanced = np.zeros(roi.shape, dtype=np.uint8)
+    red_cnt = 0
+
+    r = int(roi.shape[0] / 2)
+    for i in range(2*r+1):
+        for j in range(2*r+1):
+            if (i-r)**2 + (j-r)**2 > (r-1)**2:
+                enhanced[i, j] = [255, 255, 255]
+            else:
+                if (hsv[i, j, 0] > 172 or hsv[i, j, 0] < 8) and hsv[i, j, 1] > 100 and hsv[i, j, 2] > 50:
+                    enhanced[i, j] = [255, 0, 0]
+                    red_cnt += 1
+                elif hsv[i, j, 2] < 50:
+                    enhanced[i, j] = [0, 0, 0]
+                else:
+                    enhanced[i, j] = [255, 255, 255]
+    if red_cnt / (roi.shape[0] * roi.shape[1]) > thresh:
+        mask = (enhanced == [0, 0, 0]).all(axis=2)
+        enhanced[mask] = [255, 0, 0]
+    else:
+        mask = (enhanced == [255, 0, 0]).all(axis=2)
+        enhanced[mask] = [255, 255, 255]
+
+    return enhanced
+
+transf = transforms.ToTensor()
+
 # 定义数据集类
 class MyDataset(data.Dataset):
-    def __init__(self, all_img_paths, all_labels, transform=None):
-        self.img_paths = all_img_paths
-        self.labels = all_labels
-        self.transform = transform
+    def __init__(self, all_img_paths, all_labels, type, transform=None):
+        try:
+            self.data = torch.load(f'./dataset/{type}_dataset.pth')
+            with open(f'./dataset/{type}_labels.txt', 'r') as f:
+                self.labels = [int(line.strip()) for line in f]
+        except:
+            print(f'No {type} dataset available')
+            self.img_paths = all_img_paths
+            self.data = []
+            self.labels = all_labels
+            self.transform = transform
+            length = len(all_img_paths)
+
+            for i, path in enumerate(all_img_paths):
+                print(f'{i} / {length}', end='\r')
+                img = cv2.imread(path)
+                img = enhance_color(img)
+                self.data.append(transf(img))
+
+            print(f'\nSaving as {type}_dataset.pth and {type}_labels.txt')
+            torch.save(self.data, f'./dataset/{type}_dataset.pth')
+            with open(f'./dataset/{type}_labels.txt', 'w') as f:
+                for label in self.labels:
+                    f.write(f'{label}\n')
 
     def __len__(self):
-        return len(self.img_paths)
+        return len(self.labels)
     
     def __getitem__(self, index):
-        img_path = self.img_paths[index]
         label = self.labels[index]
-        img = Image.open(img_path)
-        if self.transform:
-            img = self.transform(img)
+        # if self.transform:
+        #     img = self.transform(img)
+        img = self.data[index]
         return img, label
 
 # 定义数据预处理
-transform = transforms.Compose(
-    [
-        transforms.Resize((64, 64)),
-        transforms.ToTensor()
-    ]
-)
+# transform = transforms.Compose(
+#     [
+#         transforms.Resize((96, 96)),
+#         transforms.ToTensor()
+#     ]
+# )
+
+## 初始化模型参数
+def init_weights(m):
+    if type(m) == nn.Conv2d:
+        nn.init.normal_(m.weight, mean=0, std=convstd)
+    if type(m) == nn.Linear:
+        nn.init.normal_(m.weight, std=linstd)
 
 def load_data(root_dir, batch_size, ratio):
     # 处理图像数据
@@ -59,30 +127,73 @@ def load_data(root_dir, batch_size, ratio):
     test_labels = all_labels[train_size:]
 
     # 创建数据集和数据加载器
-    train_dataset = MyDataset(train_imgs, train_labels, transform=transform)
-    test_dataset = MyDataset(test_imgs, test_labels, transform=transform)
+    train_dataset = MyDataset(train_imgs, train_labels, 'train')
+    test_dataset = MyDataset(test_imgs, test_labels, 'test')
     train_loader = data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     return train_loader, test_loader
 
-# 加载数据集
-root_dir = './data'
-BATCH_SIZE = 120
-ratio = 0.8
-train_loader, test_loader = load_data(root_dir, BATCH_SIZE, ratio)
+def test(model, device, img_num, batch, debug=False):
+    batch = torch.stack(batch)
+    batch = batch.to(device)
+    with torch.no_grad():
+        output = model(batch)
+        _, predicted = torch.max(output.data, 1)
+    correct = (predicted == torch.tensor([map[i] for i in params.vali])).sum().item()
+    if debug:
+        print(batch.shape, predicted.shape)
+        for i, (img, tag) in enumerate(zip(batch, predicted)):
+            img = transforms.ToPILImage()(img)
+            plt.imshow(img)
+            plt.title(params.types[tag.item()])
+            plt.show()
+            if i+1 > 5: break
+    return correct / img_num
 
-# 实例化模型
-net = CnnModel.ConvNet()
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-net.to(device)
+if __name__ == '__main__':
+    convstds = [0.1, 0.25, 0.5]
+    linstds = [0.01, 0.05]
+    batchs = [36, 60, 120]
+    lrs = [0.008, 0.01]
+    total_epoch = 15
 
-# 初始化
-net.apply(CnnModel.init_weights)
-criterion = nn.CrossEntropyLoss()
-optimizer = torch.optim.SGD(net.parameters(), lr=0.01, momentum=0.1)
+    max_acc = 0
+    vali_num = 96
+    seq = []
+    for i in range(vali_num):
+        img_path = f'validation/{i}.jpg'
+        img = cv2.imread(img_path)
+        img_data = enhance_color(img)
+        img_data = transf(img_data)
+        seq.append(img_data)
 
-net, acc = CnnModel.train_model(net, train_loader, test_loader, criterion, optimizer, device, num_epochs=4)
-if not os.path.exists('model'):
-    os.mkdir('model')
-acc = str(acc)[2:6]
-torch.save(net.state_dict(), f'model/chess_{acc}.pth')
+    for convstd, linstd, BATCH_SIZE, lr in itertools.product(convstds, linstds, batchs, lrs):
+        print(f'convstd: {convstd}, linstd: {linstd}, BATCH_SIZE: {BATCH_SIZE}, lr: {lr}')
+
+        # 加载数据集
+        root_dir = './data/noModify'
+        ratio = 0.8
+        train_loader, test_loader = load_data(root_dir, BATCH_SIZE, ratio)
+
+        # 实例化模型
+        net = CnnModel.ConvNet()
+        device = torch.device('cuda:4' if torch.cuda.is_available() else 'cpu')
+        net.to(device)
+
+        # 初始化
+        net.apply(init_weights)
+        criterion = nn.CrossEntropyLoss()
+        optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.1)
+
+        net, acc = CnnModel.train_model(
+            net, train_loader, test_loader, criterion, optimizer, device, seq, num_epochs=total_epoch, debug=False, verbose=1
+        )
+        if not os.path.exists('model'):
+            os.mkdir('model')
+
+        highest = max(acc)
+        epoch = acc.index(highest)
+        if highest > max_acc:
+            max_acc = highest
+            print(f'highest vali accuracy: {highest * 100}% at epoch{epoch+1}')
+            torch.save(net.state_dict(), f'model/chess_{str(highest)[2:]}.pth')

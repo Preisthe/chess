@@ -3,10 +3,12 @@ import torch
 from torchvision import transforms
 import matplotlib.pyplot as plt
 import params
+from IPython import embed
+import sys
 
 # 定义模型
 class ConvNet(nn.Module):
-    def __init__(self, ch = 3, h = 64, w = 64):
+    def __init__(self, ch = 3, h = params.size[0], w = params.size[1]):
         super(ConvNet, self).__init__()
 
         self.conv1 = nn.Sequential(
@@ -15,6 +17,7 @@ class ConvNet(nn.Module):
                 out_channels = 16,
                 kernel_size = 3,
                 padding = 1),
+            nn.BatchNorm2d(16),
             nn.ReLU(),
             nn.MaxPool2d(
                 kernel_size = 2,
@@ -23,6 +26,7 @@ class ConvNet(nn.Module):
         
         self.conv2 = nn.Sequential(
             nn.Conv2d(16, 32, 3, padding=1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.MaxPool2d(2,2)
         )
@@ -42,15 +46,27 @@ class ConvNet(nn.Module):
         x = self.classifier(x)
         return x
 
-## 初始化模型参数
-def init_weights(m):
-    if type(m) == nn.Conv2d:
-        nn.init.normal_(m.weight, mean=0, std=0.5)
-    if type(m) == nn.Linear:
-        nn.init.normal_(m.weight, std=0.05)
+map = {piece: i for i, piece in enumerate(params.types)}
+def test(model, device, batch, debug=False):
+    img_num = len(batch)
+    batch = torch.stack(batch)
+    batch = batch.to(device)
+    with torch.no_grad():
+        output = model(batch)
+        _, predicted = torch.max(output.data, 1)
+    correct = (predicted == torch.tensor([map[i] for i in params.vali])).sum().item()
+    if debug:
+        print(batch.shape, predicted.shape)
+        for i, (img, tag) in enumerate(zip(batch, predicted)):
+            img = transforms.ToPILImage()(img)
+            plt.imshow(img)
+            plt.title(params.types[tag.item()])
+            plt.show()
+            if i+1 > 5: break
+    return correct / img_num
 
 # 定义训练函数
-def train_model(model, train_loader, test_loader, loss_func, optimizer, device, num_epochs = 5):    
+def train_model(model, train_loader, test_loader, loss_func, optimizer, device, vali_seq, num_epochs = 5, debug=False, verbose=False):    
     """
     model: 网络模型；     train_loader: 训练数据集； test_loader: 测试数据集
     loss_func: 损失函数； optimizer: 优化方法；      num_epochs: 训练的轮数
@@ -60,18 +76,17 @@ def train_model(model, train_loader, test_loader, loss_func, optimizer, device, 
     train_acc_all = []
     val_acc_all = []
     val_loss_all = []
+    test_acc_all = []
     
     length = len(train_loader)
     gap = length//30
     total = length//gap - 1
-    
-    # for debug
-    debug = 0
 
     for epoch in range(num_epochs):
-        if epoch:
-            print('-'*10)
-        print("Epoch {}/{}".format(epoch + 1,num_epochs))
+        if verbose:
+            if epoch:
+                print('-'*10)
+            print("Epoch {}/{}".format(epoch + 1,num_epochs))
         
         train_loss = 0.0
         train_corrects = 0
@@ -82,19 +97,22 @@ def train_model(model, train_loader, test_loader, loss_func, optimizer, device, 
         val_num = 0
         
         for step,data in enumerate(train_loader):
+            # if epoch == 0 and step == 0:
+            #     embed()
             model.train() 
-            x,y = data[0].to(device), data[1].to(device)    
+            x,y = data[0].to(device), data[1].to(device)
             output = model(x) ## 模型在 X 上的输出: N * num_class
             pre_lab = torch.argmax(output, 1) ## 获得预测结果
 
-            # if debug and epoch == 4:
-            #     # print(epoch,step)
-            #     debug = 0
-            #     for i, img in enumerate(x):
-            #         img = transforms.ToPILImage()(img)
-            #         plt.imshow(img)
-            #         plt.title(params.types[int(pre_lab[i])])
-            #         plt.show()
+            if debug and epoch == 0:
+                # print(epoch,step)
+                debug = False
+                for i, img in enumerate(x):
+                    img = transforms.ToPILImage()(img)
+                    plt.imshow(img)
+                    plt.title(params.types[int(pre_lab[i])])
+                    plt.show()
+                    if i > 20: break
 
             loss = loss_func(output, y) ## 损失
             optimizer.zero_grad() ## 每次迭代将梯度初始化为0
@@ -104,7 +122,7 @@ def train_model(model, train_loader, test_loader, loss_func, optimizer, device, 
             train_corrects += torch.sum(pre_lab == y.data)
             train_num += x.size(0)
             
-            if step % gap  == gap - 1:
+            if verbose and step % gap  == gap - 1:
                 cont = step//gap
                 if cont > total:
                     cont = total
@@ -139,10 +157,15 @@ def train_model(model, train_loader, test_loader, loss_func, optimizer, device, 
         val_loss_all.append(val_loss/val_num)
         val_acc_all.append(val_corrects.double().item()/val_num)
         
-        print('')
-        print("No.{} Train Loss is:{:.4f}, Train_accuracy is {:.4f}%"
-              .format(epoch+1, train_loss_all[-1],train_acc_all[-1] * 100))
-        print("No.{} Val Loss is:{:.4f},  Val_accuracy is {:.4f}%"
-              .format(epoch+1, val_loss_all[-1], val_acc_all[-1] * 100))    
+        if verbose:
+            print('')
+            print("No.{} Train Loss is:{:.4f}, Train_accuracy is {:.4f}%"
+                .format(epoch+1, train_loss_all[-1],train_acc_all[-1] * 100))
+            print("No.{} Val Loss is:{:.4f},  Val_accuracy is {:.4f}%"
+                .format(epoch+1, val_loss_all[-1], val_acc_all[-1] * 100))    
         
-    return model, val_acc_all[-1]
+        # model.eval()
+        test_acc = test(model, device, vali_seq)
+        test_acc_all.append(test_acc)
+        
+    return model, test_acc_all

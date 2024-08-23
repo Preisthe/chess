@@ -5,6 +5,7 @@ import params
 from PIL import Image
 import matplotlib.pyplot as plt
 from random import uniform
+from IPython import embed
 
 count = {
     'r_kin': 0,
@@ -27,11 +28,13 @@ def generate_rotation(roi, kind, num):
     start = count[kind]
     roi = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB) 
     dif = 360/num
+    roi = cv2.resize(roi, params.size)
+    img = Image.fromarray(roi)
+
     for i in range(start,start+num):
-        bright = cv2.convertScaleAbs(roi, alpha=uniform(0.8,1.2), beta=uniform(-10,10))
-        img = Image.fromarray(bright)
+        # bright = cv2.convertScaleAbs(roi, alpha=uniform(0.8,1.2), beta=uniform(-10,10))
         temp = img.rotate(i*dif)
-        temp.save(f'data/b/{kind}/{i}.jpg')
+        temp.save(f'data/noModify/{kind}/{i}.jpg')
     count[kind] += num
 
 # 读取图像
@@ -43,11 +46,12 @@ circles = np.uint16(np.around(circles))
 
 os.makedirs('data', exist_ok=True)
 for kind in params.types:
-    os.makedirs(f'data/b/{kind}', exist_ok=True)
+    os.makedirs(f'data/noModify/{kind}', exist_ok=True)
 # 在原图像上标出识别出的圆
 cnt = 0
 for (x, y, r) in circles[0, :]:
     # print(x, y, r)
+    r -= 4
     roi = image[y-r:y+r+1, x-r:x+r+1]
     for i in range(2*r+1):
         for j in range(2*r+1):
@@ -59,5 +63,5 @@ for (x, y, r) in circles[0, :]:
     cv2.circle(image, (x, y), r, (0, 255, 0), 2)
     cv2.circle(image, (x, y), 2, (0, 0, 255), 3)
     cnt += 1
-plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-plt.show()
+# plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+# plt.show()
