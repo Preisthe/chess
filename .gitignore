@@ -1,11 +1,11 @@
 data
 __pycache__/*
-test
 train
 *.jpg
 .DS_Store
 !chess.jpg
 !validation/*
+!1.jpg
 enhance.py
 dataset/*
 model/*
