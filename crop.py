@@ -4,8 +4,6 @@ import os
 import params
 from PIL import Image
 import matplotlib.pyplot as plt
-from random import uniform
-from IPython import embed
 
 count = {
     'r_kin': 0,
@@ -32,9 +30,8 @@ def generate_rotation(roi, kind, num):
     img = Image.fromarray(roi)
 
     for i in range(start,start+num):
-        # bright = cv2.convertScaleAbs(roi, alpha=uniform(0.8,1.2), beta=uniform(-10,10))
         temp = img.rotate(i*dif)
-        temp.save(f'data/noModify/{kind}/{i}.jpg')
+        temp.save(f'data/noModify/{kind}/{i}.jpg', quality=100, subsampling=0)
     count[kind] += num
 
 # 读取图像
@@ -63,5 +60,5 @@ for (x, y, r) in circles[0, :]:
     cv2.circle(image, (x, y), r, (0, 255, 0), 2)
     cv2.circle(image, (x, y), 2, (0, 0, 255), 3)
     cnt += 1
-# plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-# plt.show()
+plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+plt.show()

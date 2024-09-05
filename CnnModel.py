@@ -4,7 +4,6 @@ from torchvision import transforms
 import matplotlib.pyplot as plt
 import params
 from IPython import embed
-import sys
 
 # 定义模型
 class ConvNet(nn.Module):
@@ -31,17 +30,26 @@ class ConvNet(nn.Module):
             nn.MaxPool2d(2,2)
         )
 
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.MaxPool2d(2,2)
+        )
+
         self.classifier = nn.Sequential(
-           nn.Linear(32*(h//4)*(w//4), 128), # 5
-           nn.ReLU(),
-        #    nn.Linear(128,84),
-        #    nn.ReLU(),
-           nn.Linear(128,params.num_classes)) 
+            # nn.Linear(128*(h//16)*(w//16), 2048),
+            nn.Linear(64*(h//8)*(w//8), 2048),
+            nn.ReLU(),
+            # nn.Linear(128,84),
+            # nn.ReLU(),
+            nn.Linear(2048,params.num_classes)) 
 
     def forward(self, x):
         x = self.conv1(x)
         x = self.conv2(x)
-        # x = self.conv3(x)
+        x = self.conv3(x)
+        # x = self.conv4(x)
         x = torch.flatten(x, 1) # flatten all dimensions except the batch dimension
         x = self.classifier(x)
         return x
@@ -77,6 +85,7 @@ def train_model(model, train_loader, test_loader, loss_func, optimizer, device, 
     val_acc_all = []
     val_loss_all = []
     test_acc_all = []
+    max_acc = 0
     
     length = len(train_loader)
     gap = length//30
@@ -110,9 +119,9 @@ def train_model(model, train_loader, test_loader, loss_func, optimizer, device, 
                 for i, img in enumerate(x):
                     img = transforms.ToPILImage()(img)
                     plt.imshow(img)
-                    plt.title(params.types[int(pre_lab[i])])
+                    plt.title(params.chinese[int(pre_lab[i])])
                     plt.show()
-                    if i > 20: break
+                    if i > 3: break
 
             loss = loss_func(output, y) ## 损失
             optimizer.zero_grad() ## 每次迭代将梯度初始化为0
@@ -157,15 +166,18 @@ def train_model(model, train_loader, test_loader, loss_func, optimizer, device, 
         val_loss_all.append(val_loss/val_num)
         val_acc_all.append(val_corrects.double().item()/val_num)
         
+        test_acc = test(model, device, vali_seq)
+        test_acc_all.append(test_acc)
+        if test_acc > max_acc:
+            max_acc = test_acc
+            torch.save(model.state_dict(), f'model/tmp.pth')
+        
         if verbose:
             print('')
             print("No.{} Train Loss is:{:.4f}, Train_accuracy is {:.4f}%"
                 .format(epoch+1, train_loss_all[-1],train_acc_all[-1] * 100))
             print("No.{} Val Loss is:{:.4f},  Val_accuracy is {:.4f}%"
                 .format(epoch+1, val_loss_all[-1], val_acc_all[-1] * 100))    
-        
-        # model.eval()
-        test_acc = test(model, device, vali_seq)
-        test_acc_all.append(test_acc)
+            print(f"No.{epoch+1} Test_accuracy is {test_acc_all[-1]*100}%")
         
     return model, test_acc_all

@@ -3,7 +3,6 @@ import torch
 from torch.utils import data
 from PIL import Image
 import cv2
-import argparse
 import itertools
 import matplotlib.pyplot as plt
 import numpy as np
@@ -11,15 +10,6 @@ from torchvision import transforms
 import os
 import params
 import CnnModel
-
-# 解析命令行参数
-# parser = argparse.ArgumentParser()
-# parser.add_argument('--convstd', type=float, default=0.5)
-# parser.add_argument('--linstd', type=float, default=0.05)
-# parser.add_argument('--lr', type=float, default=0.001)
-# parser.add_argument('--batchsize', type=int, default=32)
-# parser.add_argument('--epochs', type=int, default=8)
-# args = parser.parse_args()
 
 def enhance_color(roi, thresh=0.1):
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
@@ -59,6 +49,9 @@ class MyDataset(data.Dataset):
                 self.labels = [int(line.strip()) for line in f]
         except:
             print(f'No {type} dataset available')
+            if not os.path.exists('dataset'):
+                os.mkdir('dataset')
+
             self.img_paths = all_img_paths
             self.data = []
             self.labels = all_labels
@@ -86,14 +79,6 @@ class MyDataset(data.Dataset):
         #     img = self.transform(img)
         img = self.data[index]
         return img, label
-
-# 定义数据预处理
-# transform = transforms.Compose(
-#     [
-#         transforms.Resize((96, 96)),
-#         transforms.ToTensor()
-#     ]
-# )
 
 ## 初始化模型参数
 def init_weights(m):
@@ -151,13 +136,12 @@ def test(model, device, img_num, batch, debug=False):
     return correct / img_num
 
 if __name__ == '__main__':
-    convstds = [0.1, 0.25, 0.5]
-    linstds = [0.01, 0.05]
+    convstds = [0.4, 0.5]
+    linstds = [0.01, 0.03]
     batchs = [36, 60, 120]
-    lrs = [0.008, 0.01]
-    total_epoch = 15
+    lrs = [0.001]
+    total_epoch = 20
 
-    max_acc = 0
     vali_num = 96
     seq = []
     for i in range(vali_num):
@@ -167,33 +151,41 @@ if __name__ == '__main__':
         img_data = transf(img_data)
         seq.append(img_data)
 
+    root_dir = './data/noModify'
+    ratio = 0.8
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
     for convstd, linstd, BATCH_SIZE, lr in itertools.product(convstds, linstds, batchs, lrs):
+        best = 0
+        bests = []
         print(f'convstd: {convstd}, linstd: {linstd}, BATCH_SIZE: {BATCH_SIZE}, lr: {lr}')
 
         # 加载数据集
-        root_dir = './data/noModify'
-        ratio = 0.8
         train_loader, test_loader = load_data(root_dir, BATCH_SIZE, ratio)
 
-        # 实例化模型
-        net = CnnModel.ConvNet()
-        device = torch.device('cuda:4' if torch.cuda.is_available() else 'cpu')
-        net.to(device)
+        for itr in range(3):
+            # 实例化模型
+            net = CnnModel.ConvNet()
+            net.to(device)
 
-        # 初始化
-        net.apply(init_weights)
-        criterion = nn.CrossEntropyLoss()
-        optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.1)
+            # 初始化
+            net.apply(init_weights)
+            criterion = nn.CrossEntropyLoss()
+            optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.01)
 
-        net, acc = CnnModel.train_model(
-            net, train_loader, test_loader, criterion, optimizer, device, seq, num_epochs=total_epoch, debug=False, verbose=1
-        )
-        if not os.path.exists('model'):
-            os.mkdir('model')
+            net, acc = CnnModel.train_model(
+                net, train_loader, test_loader, criterion, optimizer, device, seq, num_epochs=total_epoch, debug=False, verbose=1
+            )
+            if not os.path.exists('model'):
+                os.mkdir('model')
 
-        highest = max(acc)
-        epoch = acc.index(highest)
-        if highest > max_acc:
-            max_acc = highest
-            print(f'highest vali accuracy: {highest * 100}% at epoch{epoch+1}')
-            torch.save(net.state_dict(), f'model/chess_{str(highest)[2:]}.pth')
+            highest = max(acc)
+            epoch = acc.index(highest)
+            # print(f'highest vali accuracy: {highest * 100}% at epoch{epoch+1}')
+            bests.append(highest)
+            print(f'\t{highest}')
+            if highest > best:
+                best = highest
+                os.rename('model/tmp.pth', f'model/chess_{str(highest)[2:]}.pth')
+        print("MEAN:", sum(bests) / len(bests))
+        print("BEST RESULT:", best, '\n')

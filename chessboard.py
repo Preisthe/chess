@@ -1,20 +1,11 @@
 import cv2
 import numpy as np
-import os
 import matplotlib.pyplot as plt
 import params
-from PIL import Image
 import CnnModel
 import train
 import torch
 from torchvision import transforms
-
-# transform = transforms.Compose(
-#     [
-#         transforms.Resize((64,64)),
-#         transforms.ToTensor()
-#     ]
-# )
 
 def classify(roi, model, device):
     roi = roi.unsqueeze(0)
@@ -23,7 +14,7 @@ def classify(roi, model, device):
     with torch.no_grad():
         output = model(roi)
         _, predicted = torch.max(output.data, 1)
-    return params.types[predicted.item()]
+    return params.chinese[predicted.item()]
 
 def process(roi, r):
     for i in range(2*r+1):
@@ -56,16 +47,16 @@ def recognize(img, circles, model, device):
         data = train.transf(data)
         class_name = classify(data, model, device)
 
-        # roi = transforms.ToPILImage()(data)
         true = params.vali[cnt]
         cnt += 1
-        correct.append(class_name == true)
-        # if class_name == true:
-        #     correct += 1
+        # correct.append(class_name == true)
+        if class_name == true:
+            correct += 1
 
-        # plt.imshow(roi)
-        # plt.title(class_name)
-        # plt.show()
+        roi = transforms.ToPILImage()(data)
+        plt.imshow(roi)
+        plt.title(class_name)
+        plt.show()
 
 def test(model, device, img_num, debug=False):
     batch = []
@@ -97,16 +88,17 @@ def test(model, device, img_num, debug=False):
     # print([i!=j for i, j in zip(co, correct)])
     return correct / img_num
 
+plt.rcParams['font.sans-serif'] = ['Heiti TC']
 # model loading
 model = CnnModel.ConvNet()
-device = torch.device('cuda:4' if torch.cuda.is_available() else 'cpu')
-model.load_state_dict(torch.load('model/chess_875.pth', map_location=device))
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+model.load_state_dict(torch.load('model/chess_9479+.pth', map_location=device))
 model.to(device)
 model.eval()
 
 # recognition
-# cnt = 0
-# correct = []
+cnt = 0
+correct = 0
 # for i in range(1, 11):
 #     img_path = f'train/{i}.jpg'
 #     img, circles = circle_detection(img_path)
@@ -117,3 +109,7 @@ model.eval()
 map = {piece: i for i, piece in enumerate(params.types)}
 acc = test(model, device, 96, debug=False)
 print(f'vali accuracy: {acc * 100}%')
+
+# uncomment the following code to test the model visually
+# img, circles = circle_detection('test/1.jpg')
+# recognize(img, circles, model, device)
